@@ -24,7 +24,7 @@ let package = Package(
 
         .package(
             url: "https://github.com/apple/swift-http-types.git",
-            from: "1.0.3"
+            from: "1.2.0"
         ),
 
         .package(
