@@ -3,7 +3,7 @@ import Foundation
 
 import HTTPTypes
 
-open class MockNetworkingHandler: NetworkingHandlerType {
+final class MockNetworkingHandler: NetworkingHandlerType {
 
     public init() {}
 

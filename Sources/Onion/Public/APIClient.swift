@@ -11,7 +11,7 @@ import OptionalAPI
 
 private let logger = Logger(subsystem: "Onion", category: "API Client")
 
-public protocol URLSessionType {
+public protocol URLSessionType: Sendable {
     func data(for request: HTTPRequest) async throws -> (Data, HTTPResponse)
     func upload(for request: HTTPRequest, from bodyData: Data) async throws -> (Data, HTTPResponse)
 }
@@ -20,7 +20,7 @@ extension URLSession: URLSessionType {}
 
 public final class APIClient: APIClientType {
 
-    public var baseURL: URL
+    public let baseURL: URL
 
     private var baseRequest: HTTPRequest {
         HTTPRequest(

@@ -8,7 +8,7 @@ import Onion
 // 3rd party
 import HTTPTypes
 
-class MockApiClient: APIClientType {
+actor MockApiClient: APIClientType {
 
     public let baseURL: URL
 

@@ -11,7 +11,7 @@ import AliasWonderland
 
 private let logger = Logger(subsystem: "Onion", category: "NetworkingHandler")
 
-public final class NetworkingHandler {
+public final class NetworkingHandler: Sendable {
 
     let apiClient: APIClientType
 

@@ -50,8 +50,9 @@ final class NetworkingHandlerTests: XCTestCase {
             XCTAssertEqual(response, .mock)
             XCTAssertEqual(httpResponse.status, .ok)
 
+            let result = await apiClient.processedRequests.map(\.tag)
             XCTAssertEqual(
-                apiClient.processedRequests.map(\.tag),
+                result,
                 ["Ok Request"]
             )
         } catch {
@@ -85,8 +86,10 @@ final class NetworkingHandlerTests: XCTestCase {
         } catch let error as String {
             XCTAssertEqual(error, expectedError)
 
+            let result = await apiClient.processedRequests.map(\.tag)
+
             XCTAssertEqual(
-                apiClient.processedRequests.map(\.tag),
+                result,
                 ["Throwing Request", "Throwing Request", "Throwing Request"]
             )
 

@@ -7,7 +7,7 @@ import Foundation
 // 3rd party
 import OptionalAPI
 
-public protocol LoginHandlerType {
+public protocol LoginHandlerType: Sendable {
     
     /// Current user token.
     var token: String? { get }

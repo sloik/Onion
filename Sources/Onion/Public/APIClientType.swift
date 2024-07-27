@@ -3,7 +3,7 @@ import Foundation
 import HTTPTypes
 
 /// Type that defines basic url for API and knows how to make a request.
-public protocol APIClientType {
+public protocol APIClientType: Sendable {
 
     /// base url for the api client
     var baseURL: URL { get }

@@ -2,7 +2,7 @@
 import Onion
 import AliasWonderland
 
-class MockLoginHandler: LoginHandlerType {
+class MockLoginHandler: LoginHandlerType, @unchecked Sendable {
 
     var tokenProducer: Producer<String>?
     var token: String? { tokenProducer?() }
