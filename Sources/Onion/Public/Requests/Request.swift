@@ -9,7 +9,7 @@ public enum RequestError: Error {
     case unableToCreateRequest(path: String)
 }
 
-public protocol Request<Output> {
+public protocol Request<Output>: Sendable {
 
     /// Expected returned type.
     associatedtype Output: ContentType

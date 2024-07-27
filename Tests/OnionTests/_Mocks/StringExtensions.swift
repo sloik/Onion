@@ -1,4 +1,4 @@
 
 import Foundation
 
-extension String: Error {}
+extension String: @retroactive Error {}

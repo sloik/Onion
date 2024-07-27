@@ -1,7 +1,7 @@
 
 import Foundation
 
-public struct Identifier<Tag>: ContentType, Identifiable, ExpressibleByStringLiteral, Sendable {
+public struct Identifier<Tag>: ContentType, Identifiable, ExpressibleByStringLiteral {
     public let id: String
 
     public init(id: String) {

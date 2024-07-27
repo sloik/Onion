@@ -12,7 +12,7 @@ import AliasWonderland
 /// `Flow` also conforms to `UploadRequest` so it can be used
 /// as a `Request` object. All call are forwarded to appropriate
 /// properties.
-class Flow {
+class Flow: @unchecked Sendable {
     
     /// Identifier for the flow.
     var tag: String = ""
