@@ -6,8 +6,9 @@ Two finite TLA+ models of the public semantics of `Sources/Onion`. TLC checks ea
 ## `OnionRetry.tla` - `NetworkingHandler.run`
 
 The server is a script: `resp[i]` (`ok` / `e401` / `eoth`) is the outcome of the i-th
-`apiClient.run` call, `ref[j]` says whether the j-th `loginHandler.refreshToken()` succeeds,
-and the login token starts absent or present. TLC enumerates all 729 x 8 x 2 scripts.
+`apiClient` call, `ref[j]` is the outcome of the j-th `loginHandler.refreshToken()` (`ok`,
+`fail` = throws, `notoken` = returns but leaves no token), the login token starts absent or
+present, and the request is an upload or not. TLC enumerates all 729 x 27 x 2 x 2 scripts.
 
 | Invariant | Swift behaviour it abstracts |
 |---|---|
@@ -18,9 +19,13 @@ and the login token starts absent or present. TLC enumerates all 729 x 8 x 2 scr
 | `RefreshOnlyAfter401` | `refreshToken()` is only reached through the `notSuccessStatus` 401 catch |
 | `PlainNeverRefreshes` | `authorizationWithJWTNeeded == false` goes straight to `apiClient.run` |
 | `PlainOkIffSomeOk` | plain path succeeds iff one of the 3 attempts succeeds |
-| `RetryUsesFreshToken` | after a refresh the retried call carries `.bearer(loginHandler.token!)` (new token) |
+| `RetryUsesFreshToken` | after a refresh the resent call carries the new token |
 | `CurrentTokenOverridesHeader` | with a token present, the request's `authorization` header is replaced by it |
-| `AlwaysDecides` | every run ends in success or an error |
+| `AlwaysDecides` | every run ends in success or an error, never a crash (no `token!`) |
+| `RefreshFailsAtMostOnce` | a failed refresh is never retried: at most one per `run`, and it ends the run with `unableToRefreshToken` |
+| `ErrorLabelHonest` | `unableToRefreshToken` only when refresh threw, left no token, or the resend was still 401 |
+| `StillUnauthorizedEnds` | a resend that is still 401 with the new token ends the run |
+| `UploadAlwaysUsesUpload` | an `UploadRequest` always goes through `apiClient.upload`, including the resend |
 
 ## `OnionWire.tla` - pure helpers
 
@@ -49,6 +54,10 @@ that must catch it (`\* EXPECT_VIOLATION: ...`); `run_tlc.sh` fails if a mutant 
 | `OnionRetry.ok_on_401` | a 401 is treated as success | `SuccessMeansLastCallOk` |
 | `OnionRetry.unauth_refreshes` | plain requests refresh on 401 | `PlainNeverRefreshes` |
 | `OnionRetry.ignores_token` | existing token not applied to the header | `CurrentTokenOverridesHeader` |
+| `OnionRetry.legacy_retries_refresh_failure` | pre-1.0.0: a failed refresh retried by `tryToLoad` | `RefreshFailsAtMostOnce` |
+| `OnionRetry.legacy_wraps_resend_errors` | pre-1.0.0: any resend error reported as `unableToRefreshToken` | `ErrorLabelHonest` |
+| `OnionRetry.legacy_no_token_crash` | pre-1.0.0: `token!` crash when refresh left no token | `AlwaysDecides` |
+| `OnionRetry.legacy_resend_uses_run` | pre-1.0.0: upload resent with `run` | `UploadAlwaysUsesUpload` |
 | `OnionWire.accepts_redirect` | 3xx accepted as success | `OnlySuccessfulStatusSucceeds` |
 | `OnionWire.swaps_query_items` | offset before limit | `QueryItemsLimitThenOffset` |
 | `OnionWire.basic_scheme` | `Basic` instead of `Bearer` | `BearerFieldUsesBearerScheme` |
@@ -63,17 +72,18 @@ The script checks the jar's SHA-256 against the pinned tla2tools 1.7.4. CI runs 
 self-hosted Oracle ARM64 runner, only on pushes to `main` or by manual dispatch
 (`.github/workflows/oracle-tla.yml`). The Swift build and tests stay on hosted macOS.
 
-## Findings (behaviours the model records; Swift unchanged)
+## Fixed findings (Onion 1.0.0)
 
-These are not law violations, but they are surprising and the model encodes them as-is:
+The first version of this model recorded these behaviours as-is. They are fixed in 1.0.0 and
+each one survives as a `legacy_*` mutant (table above):
 
-- `tryToLoad` retries on **every** error, including `unableToRefreshToken`, so a failing
-  refresh can call `refreshToken()` up to 3 times per `run`.
-- Inside the refresh helper, the `do/catch` wraps the post-refresh `apiClient.run` too, so any
-  error from the retried call (including a second 401 or a decode error) surfaces as
-  `unableToRefreshToken`, and there is no second refresh within one attempt.
-- `assert(loginHandler.token.isNotNone)` after refresh is debug-only; in release a nil token
-  would crash at `token!`. Not modelled (the script's tokens are always present after refresh).
+- `tryToLoad` retried on every error, including `unableToRefreshToken`, so a failing refresh
+  called `refreshToken()` up to 3 times per `run`.
+- Any error from the resend after a refresh (a 500, a decode error) surfaced as
+  `unableToRefreshToken`.
+- `assert(loginHandler.token.isNotNone)` was debug-only, so in release a refresh that left no
+  token crashed at `token!`.
+- The resend after a refresh always used `apiClient.run`, even for an `UploadRequest`.
 
 ## Limits
 

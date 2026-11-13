@@ -2,6 +2,14 @@
 
 Basic networking layer for all modules.
 
+```swift
+.package(url: "https://github.com/sloik/Onion.git", from: "1.0.0")
+```
+
+> **1.0.0 is a breaking release:** `NetworkingHandler.run` throws `unableToRefreshToken` only when
+> the token really could not be renewed, never retries a failed refresh, and no longer crashes
+> when a refresh leaves no token. See [CHANGELOG.md](CHANGELOG.md) for the full table and how to migrate.
+
 # `ContentType` protocol
 
 Marker protocol for content types. Anything returned form the network layer should conform to this protocol.

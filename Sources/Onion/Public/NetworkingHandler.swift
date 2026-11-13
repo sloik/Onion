@@ -28,9 +28,15 @@ public final class NetworkingHandler: Sendable {
 
 public enum NetworkingHandlerError: Error {
 
-    /// Thrown when refresh token request does not provide a valid token.
+    /// Thrown when the request was rejected as unauthorised (401) and the token could not be
+    /// renewed: `refreshToken()` failed, left no token, or the request was still unauthorised
+    /// with the new token. It is never retried, so `refreshToken()` runs at most once per `run`.
+    /// Other errors from the request sent after a refresh are thrown unchanged.
     case unableToRefreshToken(underlyingError: Error)
 }
+
+/// `refreshToken()` returned without error but `LoginHandlerType.token` is still `nil`.
+public struct TokenMissingAfterRefresh: Error {}
 
 extension NetworkingHandler: NetworkingHandlerType {
 
@@ -39,9 +45,9 @@ extension NetworkingHandler: NetworkingHandlerType {
         try await tryToLoad {
             if request.authorizationWithJWTNeeded {
                 var copy = request
-                // Override or add auth header with the lates token.
-                if loginHandler.hasToken {
-                    copy.headerFields[.authorization] = .bearer(loginHandler.token!)
+                // Override or add auth header with the latest token.
+                if let token = loginHandler.token {
+                    copy.headerFields[.authorization] = .bearer(token)
                 }
                 return try await tryToRunAndRefreshTokenWhenNeeded(copy)
             } else {
@@ -53,15 +59,16 @@ extension NetworkingHandler: NetworkingHandlerType {
 
 private extension NetworkingHandler {
 
-    /// Runs `action` and in case of errors retries is to total of 3 times.
+    /// Runs `action` up to 3 times in total when it throws.
+    /// A `NetworkingHandlerError` is thrown at once: retrying it would only refresh the token again.
     func tryToLoad<A,B>(action: AsyncThrowsProducer<A,B>) async throws -> (A, B) {
 
-        // Tries to get the data for a request 2 times
         for _ in 1...2 {
             do {
                 return try await action()
+            } catch let error as NetworkingHandlerError {
+                throw error
             } catch {
-                // ignore the error now
                 logger.error("\(type(of: self)) \(#function)> Error while trying to load data: \(error)")
                 continue
             }
@@ -71,39 +78,48 @@ private extension NetworkingHandler {
         return try await action()
     }
 
+    /// Sends `request` with `upload` when it is an `UploadRequest`, otherwise with `run`.
+    func execute<R: Request>(_ request: R) async throws -> (R.Output, HTTPResponse) {
+        if let uploadRequest = request as? any UploadRequest {
+            let (content, response) = try await apiClient.upload(uploadRequest)
+            return (content as! R.Output, response)
+        }
+        return try await apiClient.run(request)
+    }
+
     func tryToRunAndRefreshTokenWhenNeeded<R: Request>(_ request: R) async throws -> (R.Output, HTTPResponse) {
 
         func refreshTokenAndTriggerRequestOneMoreTime() async throws -> (R.Output, HTTPResponse) {
             logger.debug("\(type(of: self)) \(#function)> Refreshing token and trying to run request \(type(of: R.self))")
 
+            let token: String
             do {
                 try await loginHandler.refreshToken()
-                assert(loginHandler.token.isNotNone, "After refresh token should not be empty.")
-
-                // Updates token in the request
-                var copy = request
-                copy.headerFields[.authorization] = .bearer(loginHandler.token!)
-
-                return try await apiClient.run(copy)
+                guard let refreshed = loginHandler.token else { throw TokenMissingAfterRefresh() }
+                token = refreshed
             } catch {
                 logger.error("\(type(of: self)) \(#function)> Unable to refresh token with error: \(error.localizedDescription)")
-                logger.info("\(type(of: self)) \(#function)> Re login user to get the new token and refresh token")
-
                 throw NetworkingHandlerError.unableToRefreshToken(underlyingError: error)
+            }
+
+            var copy = request
+            copy.headerFields[.authorization] = .bearer(token)
+
+            do {
+                return try await execute(copy)
+            } catch let error as OnionError {
+                // Still unauthorised with the new token: the token is not valid.
+                if case .notSuccessStatus(let response, _) = error, response.status.code == 401 {
+                    throw NetworkingHandlerError.unableToRefreshToken(underlyingError: error)
+                }
+                throw error
             }
         }
 
         do {
             logger.debug("\(type(of: self)) \(#function)> Trying to run request \(type(of: request))")
-
-            if let uploadRequest = request as? any UploadRequest {
-                let (content, response) = try await apiClient.upload(uploadRequest)
-
-                return (content as! R.Output, response)
-            } else {
-                return try await apiClient.run(request)
-            }
-        } 
+            return try await execute(request)
+        }
         // Catch error related expired JWT
         catch OnionError.notSuccessStatus(let response, _) where response.status.code == 401 {
             logger.debug("\(type(of: self)) \(#function)> Unauthorised request \(type(of: request))")
@@ -114,6 +130,5 @@ private extension NetworkingHandler {
             logger.error("Error running \(type(of: request)) with error: \(error.localizedDescription)")
             throw error
         }
-
     }
 }
