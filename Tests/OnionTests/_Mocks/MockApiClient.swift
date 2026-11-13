@@ -21,12 +21,19 @@ actor MockApiClient: APIClientType {
     }
 
     var processedRequests: [Flow] = []
+    var runCount = 0
+    var uploadCount = 0
+    /// `authorization` header of every processed request, in order.
+    var sentAuthorization: [String?] = []
+
     public func run<R: Request>(_ request: R) async throws -> (R.Output, HTTPResponse) {
 
         guard let testFlowRequest = request as? Flow else {
             throw E.notTestFlowRequest
         }
 
+        runCount += 1
+        sentAuthorization.append(request.headerFields[.authorization])
         processedRequests.append(testFlowRequest)
 
         return try testFlowRequest.response as! (R.Output, HTTPResponse)
@@ -37,6 +44,8 @@ actor MockApiClient: APIClientType {
             throw E.notTestFlowRequest
         }
 
+        uploadCount += 1
+        sentAuthorization.append(request.headerFields[.authorization])
         processedRequests.append(testFlowRequest)
 
         return try testFlowRequest.response as! (R.Output, HTTPResponse)

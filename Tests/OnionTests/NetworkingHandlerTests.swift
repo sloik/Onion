@@ -221,7 +221,131 @@ final class NetworkingHandlerTests: XCTestCase {
         }
     }
 
+    /// After a 401 and a successful refresh, the request is sent again with the NEW token.
     func test_run_whenTokenIsRefresh_shouldUpdateRequestWithNewToken() async throws {
-        XCTFail("Test not implemented")
+        let flow = Flow.unauthorizedResponse
+        loginHandler.tokenProducer = { "old token" }
+        flow.responseProducer = {
+            throw OnionError.notSuccessStatus(response: .init(status: .unauthorized), data: Data())
+        }
+        loginHandler.refreshTokenClosure = { _ in
+            self.loginHandler.tokenProducer = { "new token" }
+            flow.responseProducer = { try Flow.okResponse.response }
+        }
+
+        let (output, _) = try await sut.run(flow)
+
+        XCTAssertEqual(output, .mock)
+        let sent = await apiClient.sentAuthorization
+        XCTAssertEqual(sent, ["Bearer old token", "Bearer new token"])
+    }
+
+    // MARK: - Regressions (1.0.0 retry/refresh contract)
+
+    /// A failing refresh is not retried: refreshToken() runs once per run().
+    func test_run_whenRefreshFails_shouldRefreshOnlyOnce() async throws {
+        let flow = Flow.unauthorizedResponse
+        flow.responseProducer = {
+            throw OnionError.notSuccessStatus(response: .init(status: .unauthorized), data: Data())
+        }
+        var refreshCalls = 0
+        loginHandler.refreshTokenClosure = { _ in
+            refreshCalls += 1
+            throw "refresh failed"
+        }
+
+        do {
+            _ = try await sut.run(flow)
+            XCTFail("Should throw")
+        } catch NetworkingHandlerError.unableToRefreshToken {
+            XCTAssertEqual(refreshCalls, 1)
+            let sends = await apiClient.processedRequests.count
+            XCTAssertEqual(sends, 1)
+        }
+    }
+
+    /// A non-401 error from the request sent after a refresh is thrown as itself, not as
+    /// unableToRefreshToken. Every attempt: first send 401, send after refresh 500.
+    func test_run_whenRetryAfterRefreshFailsWithOtherError_shouldThrowThatError() async throws {
+        let flow = Flow.unauthorizedResponse
+        var sends = 0
+        flow.responseProducer = {
+            sends += 1
+            let status: HTTPResponse.Status = sends % 2 == 1 ? .unauthorized : .internalServerError
+            throw OnionError.notSuccessStatus(response: .init(status: status), data: Data())
+        }
+        loginHandler.refreshTokenClosure = { _ in
+            self.loginHandler.tokenProducer = { "new token" }
+        }
+
+        do {
+            _ = try await sut.run(flow)
+            XCTFail("Should throw")
+        } catch OnionError.notSuccessStatus(let response, _) {
+            XCTAssertEqual(response.status, .internalServerError)
+        } catch {
+            XCTFail("Expected the server error, got \(error)")
+        }
+    }
+
+    /// Still 401 with the refreshed token: unableToRefreshToken, refresh not repeated.
+    func test_run_whenStillUnauthorizedAfterRefresh_shouldThrowUnableToRefreshOnce() async throws {
+        let flow = Flow.unauthorizedResponse
+        flow.responseProducer = {
+            throw OnionError.notSuccessStatus(response: .init(status: .unauthorized), data: Data())
+        }
+        var refreshCalls = 0
+        loginHandler.refreshTokenClosure = { _ in
+            refreshCalls += 1
+            self.loginHandler.tokenProducer = { "new token" }
+        }
+
+        do {
+            _ = try await sut.run(flow)
+            XCTFail("Should throw")
+        } catch NetworkingHandlerError.unableToRefreshToken(let underlying) {
+            XCTAssertEqual(refreshCalls, 1)
+            guard case OnionError.notSuccessStatus(let response, _)? = underlying as? OnionError else {
+                return XCTFail("Underlying error should be the 401, got \(underlying)")
+            }
+            XCTAssertEqual(response.status, .unauthorized)
+        }
+    }
+
+    /// refreshToken() succeeds but leaves no token: an error, not a crash on `token!`.
+    func test_run_whenRefreshLeavesNoToken_shouldThrowInsteadOfCrashing() async throws {
+        let flow = Flow.unauthorizedResponse
+        flow.responseProducer = {
+            throw OnionError.notSuccessStatus(response: .init(status: .unauthorized), data: Data())
+        }
+        loginHandler.refreshTokenClosure = { _ in
+            self.loginHandler.tokenProducer = nil
+        }
+
+        do {
+            _ = try await sut.run(flow)
+            XCTFail("Should throw")
+        } catch NetworkingHandlerError.unableToRefreshToken(let underlying) {
+            XCTAssertTrue(underlying is TokenMissingAfterRefresh)
+        }
+    }
+
+    /// An upload request sent again after a refresh still goes through upload(), not run().
+    func test_run_uploadRetriedAfterRefresh_shouldUseUpload() async throws {
+        let flow = Flow.unauthorizedResponse   // Flow is an UploadRequest
+        flow.responseProducer = {
+            throw OnionError.notSuccessStatus(response: .init(status: .unauthorized), data: Data())
+        }
+        loginHandler.refreshTokenClosure = { _ in
+            self.loginHandler.tokenProducer = { "new token" }
+            flow.responseProducer = { try Flow.okResponse.response }
+        }
+
+        _ = try await sut.run(flow)
+
+        let runs = await apiClient.runCount
+        let uploads = await apiClient.uploadCount
+        XCTAssertEqual(runs, 0)
+        XCTAssertEqual(uploads, 2)
     }
 }
